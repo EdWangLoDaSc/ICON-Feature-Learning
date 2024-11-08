@@ -2,8 +2,7 @@
 
 ## 项目简介
 
-在本项目中，我们研究了如何将 LiuYang 的 ICON 模型进行解耦，并将其分解为可见的 Transformer 训练和评估架构。此方法的详细信息可参考项目中的 baseline 文件夹。
-
+1. Liuyang ICON-LM for PDE解耦，用最简单的形式进行PDE ICOL，基于https://arxiv.org/pdf/2301.05217，做一下机制解释，虽然可能有点撤，但是看看同样的思路能不能通过HookPoint+Fourier解决ODE解释
 ## 环境设置
 
 `env.yaml` 文件用于配置基于 JAX 的 CPU 版本的环境。要创建和激活该环境，请按照以下步骤操作：
