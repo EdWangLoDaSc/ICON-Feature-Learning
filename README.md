@@ -2,7 +2,7 @@
 
 ## 项目简介
 
-1. Liuyang ICON-LM for PDE解耦，用最简单的形式进行PDE ICOL，基于https://arxiv.org/pdf/2301.05217，做一下机制解释，虽然可能有点撤，但是看看同样的思路能不能通过HookPoint+Fourier解决ODE解释
+Stage 1. Liuyang ICON-LM for PDE解耦，用最简单的形式进行PDE ICOL，基于https://arxiv.org/pdf/2301.05217，做一下机制解释，虽然可能有点撤，但是看看同样的思路能不能通过HookPoint+Fourier解决ODE解释
 ## 环境设置
 
 `env.yaml` 文件用于配置基于 JAX 的 CPU 版本的环境。要创建和激活该环境，请按照以下步骤操作：
