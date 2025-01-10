@@ -227,14 +227,12 @@ def calculate_poisson_metrics(pred_c, true_c, u, dx=0.01):
         jnp.sign(pred_c) == jnp.sign(true_c)
     )
     
-    # 2. 积分约束条件
     pred_c_integral = jnp.sum(pred_c) * dx  # 简单的矩形积分
     true_c_integral = jnp.sum(true_c) * dx
     integral_error = jnp.abs(
         pred_c_integral - true_c_integral
     ) / (jnp.abs(true_c_integral) + 1e-8)
     
-    # 3. 定义简化版的"Poisson物理准确率"
     integral_threshold = 0.05
     
     poisson_accuracy = jnp.mean(jnp.array([
@@ -383,12 +381,22 @@ for epoch in range(num_epochs):
     # 验证阶段
     val_metrics_sum = {
         'loss': 0.0,
-        'sign_accuracy': 0.0,    # 源项正负号的准确率
-        'integral_error': 0.0,   # 积分约束误差
-        'poisson_accuracy': 0.0  # 综合物理准确率
+        'sign_accuracy': 0.0,
+        'integral_error': 0.0,
+        'poisson_accuracy': 0.0
     }
-    num_val_batches = 0
     
+    # 为每个shot数量创建指标字典
+    val_metrics_sum_xshots = {
+        i: {
+            'loss': 0.0,
+            'sign_accuracy': 0.0,
+            'integral_error': 0.0,
+            'poisson_accuracy': 0.0
+        } for i in range(1, 9)  # 1-8 shots
+    }
+    
+    num_val_batches = 0
     for batch_start in range(0, len(val_combinations), batch_size):
         batch_end = min(batch_start + batch_size, len(val_combinations))
         batch_combinations = val_combinations[batch_start:batch_end]
@@ -396,12 +404,12 @@ for epoch in range(num_epochs):
         rng, step_rng = jax.random.split(rng)
         batch_data, batch_label = du.get_batch_data(val_data, batch_combinations)
         
-        # 验证步骤
+        # 验证原始数据
         val_preds = icon_lm_forward_fn_batch(params, step_rng, batch_data)
         val_preds = val_preds[:,-50:,:]
         val_loss = jnp.mean((val_preds - batch_label.reshape(val_preds.shape)) ** 2)
         
-        # 计算验证集的物理指标
+        # 计算原始验证集的物理指标
         val_poisson_metrics = jax.vmap(calculate_poisson_metrics)(
             val_preds,
             batch_label,
@@ -409,16 +417,43 @@ for epoch in range(num_epochs):
             jnp.array([0.01] * val_preds.shape[0])
         )
         
-        # 累加batch的指标
+        # 累加原始batch的指标
         val_metrics_sum['loss'] += val_loss
         for key in val_poisson_metrics:
             val_metrics_sum[key] += jnp.mean(val_poisson_metrics[key])
+        
+        # 对每个shot数量进行验证
+        for shot in range(1, n_shot+1):
+            batch_data_xshot, batch_label_xshot = du.get_batch_data_xshot(val_data, batch_combinations, xshot=shot)
+            
+            # 验证xshot数据
+            val_preds_xshot = icon_lm_forward_fn_batch(params, step_rng, batch_data_xshot)
+            val_preds_xshot = val_preds_xshot[:,-50:,:]
+            val_loss_xshot = jnp.mean((val_preds_xshot - batch_label_xshot.reshape(val_preds_xshot.shape)) ** 2)
+            
+            # 计算xshot验证集的物理指标
+            val_poisson_metrics_xshot = jax.vmap(calculate_poisson_metrics)(
+                val_preds_xshot,
+                batch_label_xshot,
+                batch_data_xshot.quest_cond_k[:,-50:,:],
+                jnp.array([0.01] * val_preds_xshot.shape[0])
+            )
+            
+            # 累加xshot batch的指标
+            val_metrics_sum_xshots[shot]['loss'] += val_loss_xshot
+            for key in val_poisson_metrics_xshot:
+                val_metrics_sum_xshots[shot][key] += jnp.mean(val_poisson_metrics_xshot[key])
+        
         num_val_batches += 1
     
     # 计算平均指标
     avg_val_metrics = {k: v / num_val_batches for k, v in val_metrics_sum.items()}
+    avg_val_metrics_xshots = {
+        shot: {k: v / num_val_batches for k, v in metrics.items()}
+        for shot, metrics in val_metrics_sum_xshots.items()
+    }
     
-    # 确保所有指标都转换为普通Python标量
+    # 转换为可记录的格式
     train_metrics = {
         'loss': float(loss),
         'sign_accuracy': float(poisson_metrics['sign_accuracy']),
@@ -443,7 +478,6 @@ for epoch in range(num_epochs):
     if val_metrics['poisson_accuracy'] > best_metrics['val_poisson_accuracy']:
         best_metrics['val_poisson_accuracy'] = val_metrics['poisson_accuracy']
     
-    # 新增：更新best训练指标
     if train_metrics['loss'] < best_metrics['train_loss']:
         best_metrics['train_loss'] = train_metrics['loss']
     if train_metrics['sign_accuracy'] > best_metrics['train_sign_accuracy']:
@@ -452,39 +486,27 @@ for epoch in range(num_epochs):
         best_metrics['train_integral_error'] = train_metrics['integral_error']
     if train_metrics['poisson_accuracy'] > best_metrics['train_poisson_accuracy']:
         best_metrics['train_poisson_accuracy'] = train_metrics['poisson_accuracy']
-
-    # wandb记录 - 确保所有都是Python标量
+    
+    # wandb记录
     wandb_log_dict = {
-        # 基本信息
-        "epoch": epoch,
-        "batch": num_train_batches,
+        "train/epoch": epoch,
+        "train/batch": num_train_batches,
+    
+        "metrics/train_loss": train_metrics['loss'],
+        "metrics/train_poisson_accuracy": train_metrics['poisson_accuracy'],
         
-        # 训练指标
-        "train_loss": train_metrics['loss'],
-        "train_sign_accuracy": train_metrics['sign_accuracy'],
-        "train_integral_error": train_metrics['integral_error'],
-        "train_poisson_accuracy": train_metrics['poisson_accuracy'],
+        "metrics/val_loss": val_metrics['loss'],
+        "metrics/val_poisson_accuracy": val_metrics['poisson_accuracy'],
         
-        # 验证指标
-        "val_loss": val_metrics['loss'],
-        "val_sign_accuracy": val_metrics['sign_accuracy'],
-        "val_integral_error": val_metrics['integral_error'],
-        "val_poisson_accuracy": val_metrics['poisson_accuracy'],
+        **{f"metrics/val_loss_{i}shot": avg_val_metrics_xshots[i]['loss'] for i in range(1, 9)},
+        **{f"metrics/val_poisson_accuracy_{i}shot": avg_val_metrics_xshots[i]['poisson_accuracy'] for i in range(1, 9)},
         
         # Best指标
-        "best_val_loss": best_metrics['val_loss'],
-        "best_val_sign_accuracy": best_metrics['val_sign_accuracy'],
-        "best_val_integral_error": best_metrics['val_integral_error'],
-        "best_val_poisson_accuracy": best_metrics['val_poisson_accuracy'],
-        
-        # 新增：Best训练指标
-        "best_train_loss": best_metrics['train_loss'],
-        "best_train_sign_accuracy": best_metrics['train_sign_accuracy'],
-        "best_train_integral_error": best_metrics['train_integral_error'],
-        "best_train_poisson_accuracy": best_metrics['train_poisson_accuracy']
+        "best/val_loss": best_metrics['val_loss'],
+        "best/val_poisson_accuracy": best_metrics['val_poisson_accuracy'],
     }
     
-    # 添加检查确保所有值都是有效的数值
+    # 检查数值有效性
     for k, v in wandb_log_dict.items():
         if not isinstance(v, (int, float)):
             print(f"Warning: {k} is not a number: {v}, type: {type(v)}")
@@ -495,15 +517,16 @@ for epoch in range(num_epochs):
     wandb.log(wandb_log_dict)
     
     # 打印当前epoch的主要指标
-    print(f"Epoch {epoch}")
-    print(f"Train Loss: {train_metrics['loss']:.4f}, Val Loss: {val_metrics['loss']:.4f}")
-    print(f"Train Sign Accuracy: {train_metrics['sign_accuracy']:.4f}, "
-          f"Val Sign Accuracy: {val_metrics['sign_accuracy']:.4f}")
-    print(f"Train Integral Error: {train_metrics['integral_error']:.4f}, "
-          f"Val Integral Error: {val_metrics['integral_error']:.4f}")
-    print(f"Train Poisson Accuracy: {train_metrics['poisson_accuracy']:.4f}, "
-          f"Val Poisson Accuracy: {val_metrics['poisson_accuracy']:.4f}")
-    print("-" * 50)
+    print(f"\nEpoch {epoch}")
+    print(f"Train Loss: {train_metrics['loss']:.4f}")
+    print(f"Val Loss: {val_metrics['loss']:.4f}")
+    print("\nPoisson Accuracy:")
+    print(f"Train: {train_metrics['poisson_accuracy']:.4f}")
+    print(f"Val: {val_metrics['poisson_accuracy']:.4f}")
+    print("\nX-shot Val Poisson Accuracy:")
+    for i in range(1, 9):
+        print(f"{i}-shot: {avg_val_metrics_xshots[i]['poisson_accuracy']:.4f}", end='  ')
+    print("\n" + "-" * 50)
 
     # 在训练循环中
     weight_norm = compute_weight_norm(params)
@@ -521,4 +544,3 @@ for epoch in range(num_epochs):
 
     prev_weight_norm = weight_norm
 wandb.finish()
-
