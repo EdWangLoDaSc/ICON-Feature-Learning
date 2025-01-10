@@ -22,7 +22,7 @@ class MLP(nn.Module):
   hidden_dim: int
   out_dim: int
   depth: int
-  kernel_init: Callable = nn.initializers.lecun_normal()  # 添加kernel_init参数
+  kernel_init: Callable = nn.initializers.lecun_normal() 
 
   @nn.compact
   def __call__(self, inputs):
@@ -520,13 +520,29 @@ for epoch in range(num_epochs):
     print(f"\nEpoch {epoch}")
     print(f"Train Loss: {train_metrics['loss']:.4f}")
     print(f"Val Loss: {val_metrics['loss']:.4f}")
-    print("\nPoisson Accuracy:")
-    print(f"Train: {train_metrics['poisson_accuracy']:.4f}")
-    print(f"Val: {val_metrics['poisson_accuracy']:.4f}")
-    print("\nX-shot Val Poisson Accuracy:")
-    for i in range(1, 9):
-        print(f"{i}-shot: {avg_val_metrics_xshots[i]['poisson_accuracy']:.4f}", end='  ')
-    print("\n" + "-" * 50)
+    
+    print("\nFull Dataset Metrics:")
+    print(f"Train Poisson Accuracy: {train_metrics['poisson_accuracy']:.4f}")
+    print(f"Val Poisson Accuracy: {val_metrics['poisson_accuracy']:.4f}")
+    print(f"Val Sign Accuracy: {val_metrics['sign_accuracy']:.4f}")
+    print(f"Val Integral Error: {val_metrics['integral_error']:.4f}")
+    
+    print("\nX-shot Metrics:")
+    metrics_names = ['loss', 'poisson_accuracy', 'sign_accuracy', 'integral_error']
+    for metric in metrics_names:
+        print(f"\n{metric.replace('_', ' ').title()}:")
+        for i in range(1, n_shot+1):
+            print(f"{i}-shot: {avg_val_metrics_xshots[i][metric]:.4f}", end='  ')
+        print()
+    print("-" * 50)
+
+    # wandb记录也相应更新
+    wandb_log_dict.update({
+        **{f"metrics/val_loss_{i}shot": avg_val_metrics_xshots[i]['loss'] for i in range(1, n_shot+1)},
+        **{f"metrics/val_poisson_accuracy_{i}shot": avg_val_metrics_xshots[i]['poisson_accuracy'] for i in range(1, n_shot+1)},
+        **{f"metrics/val_sign_accuracy_{i}shot": avg_val_metrics_xshots[i]['sign_accuracy'] for i in range(1, n_shot+1)},
+        **{f"metrics/val_integral_error_{i}shot": avg_val_metrics_xshots[i]['integral_error'] for i in range(1, n_shot+1)}
+    })
 
     # 在训练循环中
     weight_norm = compute_weight_norm(params)
